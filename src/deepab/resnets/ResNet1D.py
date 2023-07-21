@@ -173,7 +173,9 @@ class ResNet1D(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        out = self.activation(self.bn1(self.conv1(x)))
+        conv1_in = self.bn1(self.conv1(x))
+        # out = self.activation(self.bn1(self.conv1(x)))
+        out = self.activation(conv1_in)
         for layer in self.layers:
             out = layer(out)
         return out

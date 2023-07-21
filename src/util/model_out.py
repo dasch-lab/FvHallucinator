@@ -91,7 +91,9 @@ def generate_probabilities(logits):
 
 def get_probs_from_model(model, fasta_file, **kwargs):
     """Gets the probability distribution output of a H3ResNet model"""
-    logits_list = get_logits_from_model(model, fasta_file, **kwargs)
+    # logits_list = get_logits_from_model(model, fasta_file, **kwargs)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    logits_list = get_logits_from_model(model, fasta_file, device)
     probs = []
     for logits in logits_list:
         probs.append(generate_probabilities(logits))

@@ -39,8 +39,16 @@ class Constraint():
         self.modal_x = self.x_vals[modal_i].item()
         self.modal_y = y_probs[modal_i].item()
 
+        y_probs_device = None
+        if y_probs.is_cuda:
+            y_probs_device = y_probs.device
+            y_probs = y_probs.cpu().detach()
+
         average_i = torch.round(
             torch.sum(torch.mul(torch.arange(len(y_probs)).float(),
                                 y_probs))).int()
         self.average_x = self.x_vals[average_i].item()
         self.average_y = y_probs[average_i].item()
+
+        if y_probs.is_cuda:
+            y_probs = torch.tensor(y_probs).to(y_probs_device)

@@ -68,6 +68,8 @@ def get_constraint_residue_pairs(model: torch.nn.Module,
                                  use_logits: bool = True):
     seq = load_full_seq(fasta_file)
 
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
     model_type = type(
         model) if not type(model) == ModelEnsemble else model.model_type()
     model_out_constraint_types = model_out_constraint_dict[model_type]
@@ -79,7 +81,7 @@ def get_constraint_residue_pairs(model: torch.nn.Module,
     if use_logits:
         logits = [
             p.permute(1, 2, 0)
-            for p in get_logits_from_model(model, fasta_file)
+            for p in get_logits_from_model(model, fasta_file, device)
         ]
         preds = logits
 

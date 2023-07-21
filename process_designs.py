@@ -79,9 +79,11 @@ def process_hallucination_output(target_pdb,
     
     data_reader = HallucinationDataReader(indices_hal, target_pdb, trajfiles_path)
     outfile = os.path.join(out_path, 'sequences.fasta')
+    outfile_tsv = os.path.join(out_path, 'sequences.tsv')
     data_reader.write_final_sequences_to_fasta(outfile)
     outfile_indices = os.path.join(out_path, 'sequences_indices.fasta')
     data_reader.write_final_subsequences_to_fasta(outfile_indices)
+    data_reader.write_final_sequence_to_tsv(outfile_tsv)
 
     all_sequences = data_reader.list_of_final_des_subsequences
     all_sequences_full = data_reader.list_of_final_sequences

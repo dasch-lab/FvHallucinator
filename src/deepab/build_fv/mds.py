@@ -107,12 +107,23 @@ def fix_bond_lengths(dist_mat: torch.Tensor,
     """
     Replace one-offset diagonal entries with ideal bond lengths
     """
-    dist_mat = dist_mat.numpy()
-    bond_lengths = bond_lengths.numpy()
+
+    # Convert to cpu before converting to numpy
+    dist_mat_device = dist_mat.device
+    if dist_mat.is_cuda:
+        dist_mat = dist_mat.cpu().detach().numpy()
+    else:
+        dist_mat = dist_mat.numpy()
+
+    if bond_lengths.is_cuda:
+        bond_lengths = bond_lengths.cpu().detach().numpy()
+    else:
+        bond_lengths = bond_lengths.numpy()
+
     np.fill_diagonal(dist_mat[1:, :], bond_lengths)
     np.fill_diagonal(dist_mat[:, 1:], bond_lengths)
 
-    dist_mat = torch.tensor(dist_mat)
+    dist_mat = torch.tensor(dist_mat).to(dist_mat_device)
 
     # Set chain break distance to arbitrarily large value for replacement by F-W algorithm
     if delim is not None:
@@ -126,13 +137,22 @@ def fill_dist_mat(dist_mat: torch.Tensor) -> torch.Tensor:
     """
     Fill sparse distance matrix using Floyd-Warshall shortest path algorithm
     """
-    dist_mat = dist_mat.numpy()
+
+    # Convert to cpu before converting to numpy
+    dist_mat_device = dist_mat.device
+    if dist_mat.is_cuda:
+        dist_mat = dist_mat.cpu().detach().numpy()
+    else:
+        dist_mat = dist_mat.numpy()
+
+    # dist_mat = dist_mat.numpy()
     dist_mat = np.nan_to_num(dist_mat, nan=np.inf)
     for m in range(dist_mat.shape[0]):
         o = dist_mat[m]
         dist_mat = np.minimum(dist_mat, o[None, :] + o[:, None])
 
-    dist_mat = torch.tensor(dist_mat)
+    # dist_mat = torch.tensor(dist_mat)
+    dist_mat = torch.tensor(dist_mat).to(dist_mat_device)
 
     return dist_mat
 
@@ -253,8 +273,20 @@ def metric_MDS(dist_mat: torch.Tensor) -> torch.Tensor:
     """
     Find coords satisfying distance matrix via multi-dimensional scaling
     """
+
+    # Move tensor to cpu if needed
+     # Convert to cpu before converting to numpy
+    dist_mat_device = None
+    if dist_mat.is_cuda:
+        dist_mat_device = dist_mat.device
+        dist_mat = dist_mat.cpu().detach()
+
     mds = MDS(3, max_iter=500, dissimilarity="precomputed")
     coords = torch.tensor(mds.fit_transform(dist_mat))
+
+    # Move tensor back to gpu
+    if dist_mat_device:
+        dist_mat = torch.tensor(dist_mat).to(dist_mat_device)
 
     return coords
 

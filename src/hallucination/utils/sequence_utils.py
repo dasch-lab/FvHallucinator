@@ -37,7 +37,7 @@ def makelogo(df_logo, dict_residues={ 'reslist':[], 'labellist':[]}, outfile='te
         df_logo = df_logo.replace(0.0, 1e-3)
         df_logo = logomaker.transform_matrix(df_logo, from_type=transform_from, to_type=transform_to)
         ss_logo = logomaker.Logo(df_logo,
-                             font_name='Stencil Std',
+                            #  font_name='Stencil Std',
                              color_scheme='NajafabadiEtAl2017',
                              vpad=.1,
                              width=.8,
@@ -46,7 +46,7 @@ def makelogo(df_logo, dict_residues={ 'reslist':[], 'labellist':[]}, outfile='te
                              ax=ax)
     else:
         ss_logo = logomaker.Logo(df_logo,
-                             font_name='Stencil Std',
+                            #  font_name='Stencil Std',
                              color_scheme='NajafabadiEtAl2017',
                              vpad=.1,
                              width=.8,
@@ -97,7 +97,7 @@ def makelogo_with_reference(df_logos, df_labels, dict_residues={ 'reslist':[], '
     fig, axes = plt.subplots(1, len(df_logos), figsize=((N)*0.65*len(df_logos),1.5*3))
     for i in range(len(df_logos)):
         ss_logo = logomaker.Logo(df_logos[i],
-                                font_name='Stencil Std',
+                                # font_name='Stencil Std',
                                 color_scheme='NajafabadiEtAl2017',
                                 vpad=.1,
                                 width=.8,
@@ -148,7 +148,7 @@ def makelogo_with_reference_and_perplexity(df_logos, df_labels, df_perplexity,
     fig, axes = plt.subplots(1, len(df_logos) + 1, figsize=((N)*0.65*(len(df_logos)+1),1.5*3))
     for i in range(len(df_logos)):
         ss_logo = logomaker.Logo(df_logos[i],
-                                font_name='Stencil Std',
+                                # font_name='Stencil Std',
                                 color_scheme='NajafabadiEtAl2017',
                                 vpad=.1,
                                 width=.8,
@@ -209,7 +209,7 @@ def makelogo_stack(df_logo_list, dict_residues_list=[{}], outfile='templogo.png'
     fig, axes = plt.subplots(len(df_logo_list), 1)
     for i, df_logo in enumerate(df_logo_list):
         ss_logo = logomaker.Logo(df_logo,
-                                 font_name='Stencil Std',
+                                #  font_name='Stencil Std',
                                  color_scheme='NajafabadiEtAl2017',
                                  width=.8,
                                  ax=axes[i])
@@ -224,13 +224,13 @@ def makelogo_stack(df_logo_list, dict_residues_list=[{}], outfile='templogo.png'
                     dict_residues['labellist'][t]
                     for t in range(0, len(dict_residues['labellist']), 1)
                 ]
-                ss_logo.ax.set_xticklabels(labels, fontsize=5, Rotation=45)
+                ss_logo.ax.set_xticklabels(labels, fontsize=5)
             else:
                 labels = [
                     dict_residues['reslist'][t]
                     for t in range(0, len(dict_residues['reslist']), 1)
                 ]
-                ss_logo.ax.set_xticklabels(labels, fontsize=5, Rotation=45)
+                ss_logo.ax.set_xticklabels(labels, fontsize=5)
         if add_yticks:
             if mode == 'bits':
                 ss_logo.ax.set_yticks([0.0, 1.0, 2.0, 3.0, 4.0])

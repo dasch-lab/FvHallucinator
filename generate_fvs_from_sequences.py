@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 from dask.distributed import Client, get_client
 from dask.distributed import Client
-from dask_jobqueue import SLURMCluster
+# from dask_jobqueue import SLURMCluster
 import pyrosetta.distributed.dask
 from pyrosetta import *
 from src.hallucination.utils.pyrosetta_utils \
@@ -760,25 +760,33 @@ if __name__ == '__main__':
     args = get_args()
     import json
     use_cluster_decoy = False
-    if args.slurm_cluster_config != '':
-        scratch_dir = os.path.join(args.scratch_space)
-        os.system("mkdir -p {}".format(scratch_dir))
-        use_cluster_decoy = True
-        config_dict = json.load(open(args.slurm_cluster_config, 'r'))
-        cluster = SLURMCluster(**config_dict,
-                               local_directory=scratch_dir,
-                               job_extra=[
-                                   "-o {}".format(os.path.join(scratch_dir,
-                                                  "slurm-%j.out"))
-                               ],
-                               extra=pyrosetta.distributed.dask.worker_extra(
-                                   init_flags=init_string)
-                               )
-        print(cluster.job_script())
-        cluster.adapt(minimum_jobs=min(args.decoys, 2),
-                      maximum_jobs=min(args.decoys, args.slurm_scale))
 
-        client = Client(cluster)
+
+    # set the default tensor type to a CUDA tensor type if a GPU is available, otherwise use CPU
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # device = 'cpu'
+    # torch.set_default_tensor_type(torch.Tensor().to(device).dtype)
+    torch.set_default_device(device)
+
+    # if args.slurm_cluster_config != '':
+    #     scratch_dir = os.path.join(args.scratch_space)
+    #     os.system("mkdir -p {}".format(scratch_dir))
+    #     use_cluster_decoy = True
+    #     config_dict = json.load(open(args.slurm_cluster_config, 'r'))
+    #     cluster = SLURMCluster(**config_dict,
+    #                            local_directory=scratch_dir,
+    #                            job_extra=[
+    #                                "-o {}".format(os.path.join(scratch_dir,
+    #                                               "slurm-%j.out"))
+    #                            ],
+    #                            extra=pyrosetta.distributed.dask.worker_extra(
+    #                                init_flags=init_string)
+    #                            )
+    #     print(cluster.job_script())
+    #     cluster.adapt(minimum_jobs=min(args.decoys, 2),
+    #                   maximum_jobs=min(args.decoys, args.slurm_scale))
+
+    #     client = Client(cluster)
 
     if args.plot_consolidated_funnels:
         indices_hal = get_hal_indices(args)

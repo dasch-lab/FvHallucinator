@@ -72,6 +72,14 @@ class HallucinationDataReader(object):
         else:
             self.list_of_final_sequences = []
 
+    def write_final_sequence_to_tsv(self, outfile):
+        with open(outfile, 'w') as handle:
+            handle.write('id\tH\tL\n')
+            for desid in self.dict_of_final_sequences:
+                heavy_seq = self.dict_of_final_sequences[desid][:self.len_heavy]
+                light_seq = self.dict_of_final_sequences[desid][self.len_heavy:]
+                handle.write('{}\t{}\t{}\n'.format(desid, heavy_seq, light_seq))
+
     def write_final_sequences_to_fasta(self, outfile):
         fasta_format = '>sequences_{}_final:H\n{}\n>sequences_{}_final:L\n{}\n'
         sorted_keys = sorted(list(self.dict_of_final_sequences.keys()))
