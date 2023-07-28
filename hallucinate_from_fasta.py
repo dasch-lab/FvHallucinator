@@ -13,6 +13,7 @@ from urllib.request import urlopen
 from pyrosetta import *
 import numpy
 import torch
+import pandas
 
 from hallucinate import get_target_geometries
 from generate_fvs_from_sequences import build_structure
@@ -98,7 +99,7 @@ def _parseInput(path):
 
   return sequenceMap
 
-def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', count=1, max_iters=50):
+def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', count=1, max_iters=50, prefix=None):
 
 
     # Set default parameters
@@ -224,6 +225,8 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
     os.makedirs(out_dir_int, exist_ok=True)
     os.makedirs(out_dir_trajs, exist_ok=True)
 
+    result_list = []
+    prefix = 'sequence' if prefix is None else prefix
     for suffix in range(count):
       print('Producing hallucination {}'.format(suffix))
 
@@ -239,10 +242,21 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
         lr_config=lr_dict,
         disallowed_aas_at_initialization=disallowed_aas).to(device)
 
+      best_sequence = None
       for itr in range(max_iters):
 
-        list_losses = sequence_hallucinator.update_sequence(
-            disallow_letters=disallowed_aas)
+        list_losses = sequence_hallucinator.update_sequence(disallow_letters=disallowed_aas)
+
+        # Store loss
+        total_loss = list_losses[0].sum().item()
+        sequence = sequence_hallucinator.get_sequence()
+        # print('Loss: {}; {}'.format(total_loss,sequence ))
+        best_sequence = {
+          'iteration': itr,
+          'loss': total_loss,
+          'VH': sequence[0],
+          'VL': sequence[1]
+        } if best_sequence is None or best_sequence['loss'] > total_loss else best_sequence
 
         if itr == 0:
             sequence_hallucinator.write_sequence_history_file(
@@ -258,7 +272,7 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
 
         # learning rate based autostop criterion
         if autostop:
-            print(itr+1, sequence_hallucinator.lr, sequence_hallucinator.start_lr)
+            print('  Iteration {}; learning rate: {}; start learning rate: {}'.format(itr+1, sequence_hallucinator.lr, sequence_hallucinator.start_lr))
             if sequence_hallucinator.start_lr / float(
                 sequence_hallucinator.lr
             ) >= 100.0:
@@ -273,9 +287,18 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
             # plot_all_losses(traj_loss_dict, outfile,
             #                 max_iters, wt_geom_loss)
 
+      # Best loss
+      print('Best loss: {}; iter: {}; VH: {}; VL: {}'.format(best_sequence['loss'], best_sequence['iteration'], best_sequence['VH'], best_sequence['VL']))
+      result_list.append({
+        'name': prefix,
+        'index': itr,
+        'VH': best_sequence['VH'],
+        'VL': best_sequence['VL'],
+        'loss': best_sequence['loss']
+      })
+
       # Write trajectory sequences
-      sequence_hallucinator.write_sequence_history_file(
-          os.path.join(out_dir_trajs, "sequences_{}_final.fasta".format(suffix)))
+      sequence_hallucinator.write_sequence_history_file(os.path.join(out_dir_trajs, "sequences_{}_final.fasta".format(suffix)))
 
     # Save losses
     # outfile_loss_mat = os.path.join(out_dir_losses,
@@ -287,6 +310,17 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
     #                        "loss_{{}}_{}_final.png".format(suffix))
     # plot_all_losses(traj_loss_dict, outfile,
     #                 max_iters, wt_geom_loss)
+
+    # Done, store results
+    df = pandas.DataFrame(result_list)
+    df.to_csv(os.path.join(output_path, 'result.tsv'), sep='\t', index=False)
+
+    # Store fasta data
+    fasta_path = os.path.join(output_path, 'result.fasta')
+    with open(fasta_path, 'w') as handle:
+      for index, row in df.iterrows():
+         handle.write('>{}_{}:H\n{}\n'.format(row['name'],index, row['VH']))
+         handle.write('>{}_{}:L\n{}\n'.format(row['name'],index, row['VL']))
     
 
 if __name__ == "__main__":
@@ -381,10 +415,6 @@ if __name__ == "__main__":
         20
         )
       
-  # Cleanup
-
-  
-      
   # Generate hallucination
   for i in range(len(jobList)):
     print('Hallucinate job #{0}: {1}'.format(i, jobList[i]['path']))
@@ -394,11 +424,30 @@ if __name__ == "__main__":
     if not os.path.exists(hallucinate_path):
       os.mkdir(hallucinate_path)
 
-    if not os.path.exists(os.path.join(hallucinate_path, 'full.fasta')):
-      __hallucinate(model, pdb_path, hallucinate_path, count=10, max_iters=20)
-    # bin_path = os.path.join(file_path, 'hallucinate.py')
-    # command = [ bin_path, "--domT", "0", "-o", output_filename, self.modelpath + '.hmm', fasta_filename]
-    # process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE  )
-    # _, pr_stderr = process.communicate()
-    # if pr_stderr:
-    #     raise Exception(pr_stderr)
+    fasta_path = os.path.join(hallucinate_path, 'result.fasta')
+    if not os.path.exists(fasta_path):
+      __hallucinate(model, pdb_path, hallucinate_path, count=10, max_iters=20, prefix=jobList[i]['name'])
+
+  # Concatenate results
+  df = None
+  result_path = os.path.join(args.output, 'hallucinate.tsv')
+  for i in range(len(jobList)):
+    hallucinate_path = os.path.join(jobList[i]['path'], 'hallucination', 'result.tsv')
+    if not os.path.exists(hallucinate_path):
+      continue
+
+    # read result
+    df_hallucinate = pandas.read_csv(hallucinate_path, sep='\t')
+    if df is None:
+      df = df_hallucinate
+      continue
+
+    # Concatenate data
+    df = pandas.concat([df, df_hallucinate])
+
+  # Store result
+  df.to_csv(result_path, sep='\t', index=False)
+
+
+
+    
