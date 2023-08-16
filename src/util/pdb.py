@@ -72,6 +72,9 @@ def renumber_pdb(old_pdb, renum_pdb):
         except requests.exceptions.ConnectionError:
             time.sleep(60)
 
+    if not success:
+        raise Exception('Unable to contact abnum server')
+    
     # if success:
     new_pdb_data = response.text
     with open(renum_pdb, "w") as f:

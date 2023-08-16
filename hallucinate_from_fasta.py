@@ -2,16 +2,15 @@
 
 import io
 import os
-import re
-import sys
-import glob
 import argparse
-import subprocess
 import shutil
-import tarfile
 from urllib.request import urlopen
 from pyrosetta import *
-import numpy
+import hashlib
+import copy
+import tarfile
+import traceback
+
 import torch
 import pandas
 
@@ -20,40 +19,17 @@ from generate_fvs_from_sequences import build_structure
 from src.deepab.models.AbResNet import load_model
 from src.deepab.models.ModelEnsemble import ModelEnsemble
 
+from src.hallucination.utils.loss_plotting_utils import plot_all_losses
 from src.hallucination.SequenceHallucinator import SequenceHallucinator
 from src.hallucination.loss.setup_losses import setup_loss_components,\
     setup_loss_weights,\
     get_reference_losses,\
     debug_wt_losses
-from src.util.pdb import get_pdb_chain_seq, \
-    protein_pairwise_geometry_matrix
+from src.util.pdb import get_pdb_chain_seq
 from src.util.masking import mask_from_indices_list
 from src.hallucination.utils.util import get_model_file,\
-    comma_separated_chain_indices_to_dict,\
     get_indices_from_different_methods,\
     convert_chain_aa_to_index_aa_map
-
-# from hallucinate import 
-# from src.deepab.build_fv.build_cen_fa \
-#     import build_initial_fv, get_cst_file, refine_fv
-# from src.deepab.build_fv.utils import migrate_seq_numbering, get_constraint_set_mover
-# from src.deepab.build_fv.score_functions import get_sf_fa
-# from src.hallucination.utils.util\
-#     import get_indices_from_different_methods,\
-#     comma_separated_chain_indices_to_dict, get_model_file
-# from src.util.pdb import get_pdb_numbering_from_residue_indices, renumber_pdb,\
-#     get_pdb_chain_seq
-
-# from subprocess import call
-# from subprocess import Popen, PIPE
-
-# init_string = "-mute all -check_cdr_chainbreaks false -detect_disulf true"
-# pyrosetta.init(init_string)
-# torch.no_grad()
-
-# import src.pdb as pdb
-# import src.fragment as fragment
-# import src.fasta as fasta
 
 # Get script path
 file_path  = os.path.split(__file__)[0]
@@ -81,23 +57,53 @@ def _parseInput(path):
   '''
   Parse an input fasta file with paired/unpaired protein sequences
   '''
+  sequence_map = {}
+  file_extension = os.path.splitext(path)[1]
+  is_fasta = True if file_extension in ['.fasta', '.fa'] else False
+  if is_fasta:
 
-  sequenceMap = {}
-  for (header, sequence) in _parseFasta(path):
+    # Parse fasta files
+    for (header, sequence) in _parseFasta(path):
 
-    name, chain = header.split(':')
-    # Split sequence in VH and VL
-    # sequence = sequence.split('/')
-    sequenceMap.setdefault(name, {
-      'name': name,
-      'chain': {}
-    })
-    sequenceMap[name]['chain'][chain] = sequence
-    # for i in range(len(sequence)):
-    #   chain_type = 'VH' if i == 0 else 'VL'
-    #   sequenceMap[name]['chain'][chain_type] = sequence[i]
+      name, chain = header.split(':')
+      sequence_map.setdefault(name, {
+        'name': name,
+        'chain': {}
+      })
+      sequence_map[name]['chain'][chain] = sequence
+  else:
+    
+    # Parse tsv file
+    df = pandas.read_csv(path, sep=None, engine='python')
+    for index, row in df.iterrows():
+      name = row['name'] if 'name' in row.index else None
+      VH = row['VH'] if 'VH' in row.index else None
+      VL = row['VL'] if 'VL' in row.index else None
+      if name is None:
+        continue
 
-  return sequenceMap
+      sequence_map[name] = {
+        'name': name,
+        'chain': {
+          'H': VH,
+          'L': VL
+        }
+      }
+
+  # Calculate an hash for each sequence pair and remove duplicates
+  result_map = {}
+  for key in sequence_map:
+    VH = sequence_map[key]['chain']['H'] if 'H' in sequence_map[key]['chain'] else ''
+    VL = sequence_map[key]['chain']['L'] if 'L' in sequence_map[key]['chain'] else ''
+    sequence = VH + VL
+    ab_hash = hashlib.md5(sequence.encode()).hexdigest()
+    sequence_map[key]['hash'] = ab_hash
+
+    # Append missing result
+    if ab_hash not in result_map:
+      result_map[ab_hash] = copy.deepcopy(sequence_map[key])
+
+  return result_map
 
 def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', count=1, max_iters=50, prefix=None):
 
@@ -189,8 +195,8 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
                                              len(wt_heavy_seq))
         print('Positions with restricted AA at Indices: ', restricted_dict_keep_aas_indexed)
 
-    out_dir_losses = os.path.join(output_path, 'losses')
-    os.makedirs(out_dir_losses, exist_ok=True)
+    # out_dir_losses = os.path.join(output_path, 'losses')
+    # os.makedirs(out_dir_losses, exist_ok=True)
     loss_components, loss_components_dict = \
         setup_loss_components(wt_seq, model,
                               len(wt_heavy_seq),
@@ -220,10 +226,10 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
     for key in loss_components_dict:
       traj_loss_dict[key] = []
 
-    out_dir_trajs = os.path.join(output_path, 'trajectories')
+    # out_dir_trajs = os.path.join(output_path, 'trajectories')
     out_dir_int = os.path.join(output_path, 'intermediate')
     os.makedirs(out_dir_int, exist_ok=True)
-    os.makedirs(out_dir_trajs, exist_ok=True)
+    # os.makedirs(out_dir_trajs, exist_ok=True)
 
     result_list = []
     prefix = 'sequence' if prefix is None else prefix
@@ -250,7 +256,7 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
         # Store loss
         total_loss = list_losses[0].sum().item()
         sequence = sequence_hallucinator.get_sequence()
-        # print('Loss: {}; {}'.format(total_loss,sequence ))
+        print('Iter: {}/{}; Loss: {}'.format(itr, max_iters, total_loss))
         best_sequence = {
           'iteration': itr,
           'loss': total_loss,
@@ -282,15 +288,14 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
         if (itr + 1) % n_every == 0:
           sequence_hallucinator.write_sequence_history_file(os.path.join(out_dir_int,"sequences_{}_{}.fasta".format(suffix, itr)))
 
-            # outfile = os.path.join(out_dir_losses,
-            #                        "loss_{{}}_{}_{}.png".format(suffix, itr))
-            # plot_all_losses(traj_loss_dict, outfile,
-            #                 max_iters, wt_geom_loss)
+          outfile = os.path.join(out_dir_losses,"loss_{{}}_{}_{}.png".format(suffix, itr))
+          plot_all_losses(traj_loss_dict, outfile, max_iters, wt_geom_loss)
 
       # Best loss
       print('Best loss: {}; iter: {}; VH: {}; VL: {}'.format(best_sequence['loss'], best_sequence['iteration'], best_sequence['VH'], best_sequence['VL']))
       result_list.append({
-        'name': prefix,
+        'origin': prefix,
+        'name': '{}_{:05}'.format(prefix, suffix),
         'index': itr,
         'VH': best_sequence['VH'],
         'VL': best_sequence['VL'],
@@ -298,7 +303,7 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
       })
 
       # Write trajectory sequences
-      sequence_hallucinator.write_sequence_history_file(os.path.join(out_dir_trajs, "sequences_{}_final.fasta".format(suffix)))
+      # sequence_hallucinator.write_sequence_history_file(os.path.join(out_dir_trajs, "sequences_{}_final.fasta".format(suffix)))
 
     # Save losses
     # outfile_loss_mat = os.path.join(out_dir_losses,
@@ -306,10 +311,8 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
     # numpy.save(outfile_loss_mat, traj_loss_dict)
 
     # # Plot losses
-    # outfile = os.path.join(out_dir_losses,
-    #                        "loss_{{}}_{}_final.png".format(suffix))
-    # plot_all_losses(traj_loss_dict, outfile,
-    #                 max_iters, wt_geom_loss)
+    outfile = os.path.join(out_dir_losses, "loss_{{}}_{}_final.png".format(suffix))
+    plot_all_losses(traj_loss_dict, outfile, max_iters, wt_geom_loss)
 
     # Done, store results
     df = pandas.DataFrame(result_list)
@@ -319,19 +322,21 @@ def __hallucinate(model, target_pdb, output_path, cdr_list='h1,h2,h3,l1,l2,l3', 
     fasta_path = os.path.join(output_path, 'result.fasta')
     with open(fasta_path, 'w') as handle:
       for index, row in df.iterrows():
-         handle.write('>{}_{}:H\n{}\n'.format(row['name'],index, row['VH']))
-         handle.write('>{}_{}:L\n{}\n'.format(row['name'],index, row['VL']))
+         handle.write('>{}|{}:H\n{}\n'.format(row['name'],row['origin'], row['VH']))
+         handle.write('>{}|{}:L\n{}\n'.format(row['name'],row['origin'], row['VL']))
     
-
 if __name__ == "__main__":
 
   # Initialize the argument parser
   argparser = argparse.ArgumentParser()
   argparser.add_argument('-i', '--input', help='input fasta', dest='input', default=None, type=str, required=True)
   argparser.add_argument('-o', '--output', help='output folder', dest='output', type=str, required=True)
-  argparser.add_argument('-d', '--decoy', help='decoy number', dest='decoy', type=int, required=False, default=10)
+  argparser.add_argument('-hi', '--hallucination_iters', help='number of iteration for each hallucination', dest='hallucination_iters', type=int, required=False, default=100)
+  argparser.add_argument('-hc', '--hallucination_count', help='number generated hallucinations per antibody', dest='hallucination_count', type=int, required=False, default=10)
+  argparser.add_argument('-d', '--decoy', help='number of decoys for structure prediction', dest='decoy', type=int, required=False, default=5)
   argparser.add_argument('-g', '--gpu', action="store_true", dest="gpu", help="Use gpu")
-
+  argparser.add_argument('-f', '--force', action='store_true', help='Force recomputing all files in library', dest="force")
+  
   # Parse arguments
   args = argparser.parse_args()
 
@@ -352,26 +357,36 @@ if __name__ == "__main__":
 
   # torch.cuda.set_device(device)
   model_files = get_model_file()
-  model = ModelEnsemble(load_model=load_model,
-                        model_files=model_files,
-                        device=device,
-                        eval_mode=True)
+  model = ModelEnsemble(
+    load_model=load_model,
+    model_files=model_files,
+    device=device,
+    eval_mode=True
+  )
   
   # Generate the sequence map from the input file
-  sequenceMap = _parseInput(args.input)
+  sequence_map = _parseInput(args.input)
+  print('Found {} unique job(s) in the input file'.format(len(sequence_map)))
 
   # Process sequence map
   statistics = {}
-  jobList = []
-  for name in sequenceMap:
-    print('Processing Ab {0} [{1}]'.format(name, ';'.join(list(sequenceMap[name]['chain'].keys()))))
+  job_list = []
+  for key in sequence_map:
+    name = sequence_map[key]['name']
+    print('Processing Ab {}-{} [{}]'.format(
+      key, 
+      name,
+      ';'.join(list(sequence_map[key]['chain'].keys()))
+    ))
 
     # Skip unpaired Abs
-    if len(sequenceMap[name]['chain']) != 2:
+    if len(sequence_map[key]['chain']) != 2:
+      print('  Antibody {} is unpaired'.format(name))
       continue
 
     # Generate the sequence file
-    data_directory = os.path.join(args.output, name)
+    # data_directory = os.path.join(args.output, name)
+    data_directory = os.path.join(args.output, key)
     if not os.path.exists(data_directory):
       os.mkdir(data_directory)
 
@@ -380,64 +395,113 @@ if __name__ == "__main__":
     with open(input_path, 'w') as handle:
 
       # Store chain data
-      for chain in sequenceMap[name]['chain']:
+      for chain in sequence_map[key]['chain']:
         handle.write('>input:{0}\n{1}\n'.format(
           ('H' if (chain == 'VH' or chain == 'H') else 'L'),
-          sequenceMap[name]['chain'][chain]
+          sequence_map[key]['chain'][chain]
         ))
 
     # Append to job list
-    jobList.append({
+    job_list.append({
       'name': name,
+      'hash': key,
       'jobid': name,
       # 'patient': sequenceMap[name]['patient'],
       'path': data_directory
     })
 
   # Process each job
-  for i in range(len(jobList)):
-    print('Processing job #{0}: {1}'.format(i, jobList[i]['path']))
+  for i in range(len(job_list)):
+    print('Processing job #{0}: {1}'.format(i, job_list[i]['path']))
+    try:
 
-    # Skip already calculated structures
-    output_path = os.path.join(jobList[i]['path'], 'pred.deepab.pdb')
-    if os.path.exists(output_path):
-      print('  skipping prediction')
-      continue
+      # Build 3D structure if not already present
+      pdb_path = os.path.join(job_list[i]['path'], 'out.deepAb.pdb')
+      if not os.path.exists(pdb_path):
+        build_structure(
+          model, 
+          os.path.join(job_list[i]['path'], 'input.fa'),
+          job_list[i]['path'],
+          target_pdb=None,
+          num_decoys=args.decoy,
+          num_procs=args.decoy,
+          # num_procs=1,
+          use_cluster=False
+          )
+        
+        # Check for presence
+        if not os.path.exists(pdb_path):
+          raise Exception('Error creating structure')
+        
+        # Compress decoys
+        compress_path = os.path.join(job_list[i]['path'], 'decoys.tar.gz')
+        with tarfile.open(compress_path, "w:gz") as tar:
+          decoy_path = os.path.join(job_list[i]['path'], 'intermediate')
+          tar.add(decoy_path, arcname='decoys')
+        
+        # Cleanup intermediate data
+        for folder in ['constraints_out', 'intermediate']:
+          remove_path = os.path.join(job_list[i]['path'], folder)
+          if os.path.exists(remove_path):
+            shutil.rmtree(remove_path)
+    except Exception as e:
+      print('Error processing job #{} [{}]: {}'.format(i, job_list[i]['hash'], str(e)))
+      print(traceback.format_exc())
 
-    # Build 3D structure if not already present
-    pdb_path = os.path.join(jobList[i]['path'], 'out.deepAb.pdb')
-    if not os.path.exists(pdb_path):
-      build_structure(
-        model, 
-        os.path.join(jobList[i]['path'], 'input.fa'),
-        jobList[i]['path'],
-        None,
-        20
-        )
-      
-  # Generate hallucination
-  for i in range(len(jobList)):
-    print('Hallucinate job #{0}: {1}'.format(i, jobList[i]['path']))
-      
-    # Hallucinate sequence
-    hallucinate_path = os.path.join(jobList[i]['path'], 'hallucination')
+    # Create hallucination directory
+    hallucinate_path = os.path.join(job_list[i]['path'], 'hallucination')
     if not os.path.exists(hallucinate_path):
       os.mkdir(hallucinate_path)
 
+    # Hallucinate sequence
     fasta_path = os.path.join(hallucinate_path, 'result.fasta')
-    if not os.path.exists(fasta_path):
-      __hallucinate(model, pdb_path, hallucinate_path, count=10, max_iters=20, prefix=jobList[i]['name'])
+    if not os.path.exists(fasta_path) or args.force:
+      print('Hallucinate job #{0}: {1}'.format(i, job_list[i]['path']))
+      __hallucinate(
+        model, 
+        pdb_path, 
+        hallucinate_path, 
+        count=args.hallucination_count, 
+        max_iters=args.hallucination_iters, 
+        prefix=job_list[i]['name']
+      )
+      
+  # # Generate hallucination
+  # for i in range(len(jobList)):
+
+  #   # Create output directory
+  #   hallucinate_path = os.path.join(jobList[i]['path'], 'hallucination')
+  #   if not os.path.exists(hallucinate_path):
+  #     os.mkdir(hallucinate_path)
+
+  #   # Hallucinate sequence
+  #   fasta_path = os.path.join(hallucinate_path, 'result.fasta')
+  #   if not os.path.exists(fasta_path) or args.force:
+  #     print('Hallucinate job #{0}: {1}'.format(i, jobList[i]['path']))
+  #     __hallucinate(
+  #       model, 
+  #       pdb_path, 
+  #       hallucinate_path, 
+  #       count=args.hallucination_count, 
+  #       max_iters=args.hallucination_iters, 
+  #       prefix=jobList[i]['name']
+  #     )
 
   # Concatenate results
   df = None
   result_path = os.path.join(args.output, 'hallucinate.tsv')
-  for i in range(len(jobList)):
-    hallucinate_path = os.path.join(jobList[i]['path'], 'hallucination', 'result.tsv')
+  for i in range(len(job_list)):
+    hallucinate_path = os.path.join(job_list[i]['path'], 'hallucination', 'result.tsv')
     if not os.path.exists(hallucinate_path):
       continue
 
     # read result
     df_hallucinate = pandas.read_csv(hallucinate_path, sep='\t')
+
+    # Append hash column
+    df_hallucinate['hash'] = job_list[i]['hash']
+
+    # Store result
     if df is None:
       df = df_hallucinate
       continue

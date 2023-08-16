@@ -9,6 +9,8 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+from tqdm.contrib.concurrent import process_map
+
 from dask.distributed import Client, get_client
 from dask.distributed import Client
 # from dask_jobqueue import SLURMCluster
@@ -404,6 +406,9 @@ def plot_folded_structure_metrics(path,
                 plt.savefig(outfile, dpi=600, transparent=True)
                 plt.close()
 
+def refine_fv_multi(args):
+    in_pdb_file, out_pdb_file, cst_defs = args
+    return refine_fv_(in_pdb_file, out_pdb_file, cst_defs)
 
 def refine_fv_(mds_pdb_file, decoy_pdb_file, cst_file):
     import pyrosetta
@@ -431,14 +436,17 @@ def renumber_from_target(pdb_file, native_pdb_file, renumbered_file):
     pose.dump_pdb(renumbered_file)
 
 
-def build_structure(model,
-                    fasta_file,
-                    out_dir,
-                    target_pdb,
-                    num_decoys=20,
-                    target="out",
-                    constraint_dir=None,
-                    use_cluster=False):
+def build_structure(
+    model,
+    fasta_file,
+    out_dir,
+    target_pdb,
+    num_decoys=20,
+    target="out",
+    constraint_dir=None,
+    use_cluster=False,
+    num_procs=1
+  ):
 
     if constraint_dir == None:
         constraint_dir = os.path.join(out_dir, "constraints_{}".format(target))
@@ -474,10 +482,14 @@ def build_structure(model,
 
         decoy_scores = client.gather(decoy_scores)
     else:
-        for i in range(num_decoys):
-            decoy_pdb_file = decoy_pdb_pattern.format(i)
-            decoy_score = refine_fv_(renum_mds_file, decoy_pdb_file, cst_file)
-            decoy_scores.append(decoy_score)
+
+        refine_args = [(renum_mds_file, decoy_pdb_pattern.format(i), cst_file) for i in range(num_decoys)]
+        decoy_scores = process_map(refine_fv_multi, refine_args, max_workers=num_procs)
+
+        # for i in range(num_decoys):
+        #     decoy_pdb_file = decoy_pdb_pattern.format(i)
+        #     decoy_score = refine_fv_(renum_mds_file, decoy_pdb_file, cst_file)
+        #     decoy_scores.append(decoy_score)
 
     best_decoy_i = np.argmin(decoy_scores)
     best_decoy_pdb = decoy_pdb_pattern.format(best_decoy_i)
