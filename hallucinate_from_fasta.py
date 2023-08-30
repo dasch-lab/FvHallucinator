@@ -390,6 +390,11 @@ if __name__ == "__main__":
     if not os.path.exists(data_directory):
       os.mkdir(data_directory)
 
+    # Check if the result already exists
+    fasta_path = os.path.join(data_directory, 'hallucination', 'result.fasta')
+    if os.path.exists(fasta_path):
+      print('Job {} already complete'.format(key))
+
     # Create the input file
     input_path = os.path.join(data_directory, 'input.fa')
     with open(input_path, 'w') as handle:
@@ -447,6 +452,7 @@ if __name__ == "__main__":
     except Exception as e:
       print('Error processing job #{} [{}]: {}'.format(i, job_list[i]['hash'], str(e)))
       print(traceback.format_exc())
+      continue
 
     # Create hallucination directory
     hallucinate_path = os.path.join(job_list[i]['path'], 'hallucination')
@@ -466,6 +472,7 @@ if __name__ == "__main__":
         prefix=job_list[i]['name']
       )
       
+    print('Job {} complete'.format(job_list[i]['hash']))
   # # Generate hallucination
   # for i in range(len(jobList)):
 
