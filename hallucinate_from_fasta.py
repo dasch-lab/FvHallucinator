@@ -336,6 +336,7 @@ if __name__ == "__main__":
   argparser.add_argument('-d', '--decoy', help='number of decoys for structure prediction', dest='decoy', type=int, required=False, default=5)
   argparser.add_argument('-g', '--gpu', action="store_true", dest="gpu", help="Use gpu")
   argparser.add_argument('-f', '--force', action='store_true', help='Force recomputing all files in library', dest="force")
+  argparser.add_argument('-p', '--platform', help='platform', dest='platform', type=str, required=False, default='cpu')
   
   # Parse arguments
   args = argparser.parse_args()
@@ -353,8 +354,25 @@ if __name__ == "__main__":
   # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
   # # device = torch.device('cpu')
-  device = 'cuda' if torch.cuda.is_available() else 'cpu'
+  # device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+  # Set up platform
+  platform_name = str(args.platform)
+  print("Setting up the platform [{}]".format(args.platform))
+  # platform = Platform.getPlatformByName(args.platform)
+  # if args.platform == 'CUDA':
+  if platform_name.startswith('cuda'):
+    cuda_args = platform_name.split(':')
+    if len(cuda_args) == 2 and not cuda_args[1].isdigit():
+      raise Exception('Invalid cuda sting: {}'.format(platform_name))
+    device = platform_name
+  elif platform_name == 'cpu':
+    print('Using CPU')
+    device = platform_name
+  else:
+    raise Exception('Invalid platform name: {}'.format(platform_name))
+
+  sys.exit(1)
   # torch.cuda.set_device(device)
   model_files = get_model_file()
   model = ModelEnsemble(
